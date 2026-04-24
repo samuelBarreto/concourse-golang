@@ -1,0 +1,117 @@
+resources:
+  - name: source-code
+    type: git
+    source:
+      uri: https://github.com/samuelBarreto/concourse-golang.git
+      branch: main
+
+jobs:
+  - name: lint
+    plan:
+      - get: source-code
+        trigger: true
+      - task: run-lint
+        config:
+          platform: linux
+          image_resource:
+            type: registry-image
+            source: { repository: golangci/golangci-lint, tag: latest }
+          inputs:
+            - name: source-code
+          run:
+            path: sh
+            args:
+              - -c
+              - |
+                cd source-code
+                golangci-lint run ./...
+
+  - name: test
+    plan:
+      - get: source-code
+        trigger: true
+        passed: [lint]
+      - task: run-tests
+        config:
+          platform: linux
+          image_resource:
+            type: registry-image
+            source: { repository: golang, tag: "1.22" }
+          inputs:
+            - name: source-code
+          run:
+            path: sh
+            args:
+              - -c
+              - |
+                cd source-code
+                go test -v -race -cover ./...
+
+  - name: build
+    plan:
+      - get: source-code
+        trigger: true
+        passed: [test]
+      - task: compile
+        config:
+          platform: linux
+          image_resource:
+            type: registry-image
+            source: { repository: golang, tag: "1.22" }
+          inputs:
+            - name: source-code
+          outputs:
+            - name: binary
+          run:
+            path: sh
+            args:
+              - -c
+              - |
+                cd source-code
+                CGO_ENABLED=0 go build -ldflags="-s -w" -o ../binary/server .
+                echo "Build successful"
+                ls -la ../binary/
+
+  - name: security-scan
+    plan:
+      - get: source-code
+        trigger: true
+        passed: [test]
+      - task: scan-vulnerabilities
+        config:
+          platform: linux
+          image_resource:
+            type: registry-image
+            source: { repository: golang, tag: "1.22" }
+          inputs:
+            - name: source-code
+          run:
+            path: sh
+            args:
+              - -c
+              - |
+                cd source-code
+                go install golang.org/x/vuln/cmd/govulncheck@latest
+                govulncheck ./...
+
+  - name: deploy
+    plan:
+      - get: source-code
+        trigger: true
+        passed: [build, security-scan]
+      - task: deploy-app
+        config:
+          platform: linux
+          image_resource:
+            type: registry-image
+            source: { repository: alpine }
+          inputs:
+            - name: source-code
+          run:
+            path: sh
+            args:
+              - -c
+              - |
+                echo "Deploying concourse-golang..."
+                echo "Version: $(cat source-code/.git/ref 2>/dev/null || echo 'latest')"
+                echo "Deploy complete!"
