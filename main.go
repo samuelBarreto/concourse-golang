@@ -6,6 +6,9 @@ import (
 	"net/http"
 )
 
+// Server exposes two endpoints:
+//   - GET / → returns a greeting message
+//   - GET /health → returns ok for health checks
 func main() {
 	http.HandleFunc("/", handler)
 	http.HandleFunc("/health", healthHandler)
